@@ -11,7 +11,7 @@
 
 volatile uint32_t isrLastPulse = 0;
 volatile uint32_t isrMtrTimePeriod = 0;
-volatile uint32_t mtrLastUpdate = 0, previousSlice = 0;
+volatile uint32_t mtrLastUpdate = 0, previousSlice = 0, lastExecute = 0, now_milli=0 ;
 
 uint16_t frame[SLICE_NUM]={0};
 
@@ -94,18 +94,31 @@ void IRAM_ATTR mIsr() {
   isrLastPulse = now;
 }
 
-void load_string(char *s){
-  uint16_t * temp = frame;
+void load_string(char *s, uint8_t start_pos = 0){
+  uint8_t start_pos_ = start_pos >= SLICE_NUM ? SLICE_NUM - 1 : start_pos;
+  uint16_t * temp = frame+start_pos_;
   uint8_t cols[5];
+  uint8_t string_len = strlen(s);
   if(s == NULL)
     return;
   memset(frame, 0, sizeof(frame));
-  for(int i = 0; i< strlen(s); i++){
+  for(int i = 0; i< string_len; i++){
     memcpy_P(cols, &alpha[(s[i] - ' ') * 5], 5);
     for(int  j = 0; j< 5; j++){
       *temp = (uint16_t)cols[j] << 4;
        temp++;
+       if(temp == frame + SLICE_NUM)
+        temp = frame;
     }
+  }
+}
+
+void sliding_string(char *s, uint32_t slide_time_ms){
+  static uint8_t slider_pos = 0;
+  if((now_milli - lastExecute) > slide_time_ms){
+    load_string(s, slider_pos);
+    slider_pos =  (slider_pos + 1) % SLICE_NUM;
+    lastExecute = now_milli;
   }
 }
 
@@ -121,11 +134,10 @@ void setup() {
 
   attachInterrupt(digitalPinToInterrupt(HE_SENS), mIsr, FALLING);
   previousSlice = SLICE_NUM;
-  char s[]="H I !";
-  load_string(s);
 }
 
 void loop() {
+  char s[]="H I !";
   uint32_t localMtrTimePeriod, localLastPulse;
   
   noInterrupts();
@@ -135,6 +147,7 @@ void loop() {
 
 
   uint32_t now = micros();
+  now_milli = millis();
   // prevent div by 0
   if(localMtrTimePeriod == 0)
     return;
@@ -144,10 +157,9 @@ void loop() {
   loopElapsed %= localMtrTimePeriod;
   uint32_t currentSlice = (loopElapsed * SLICE_NUM) /localMtrTimePeriod;
 
-
+  sliding_string(s,100);
   if(currentSlice != previousSlice){
     tlc_write_2_bytes(frame[currentSlice % SLICE_NUM]);
     previousSlice = currentSlice;
   }
-
 }
