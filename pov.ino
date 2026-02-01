@@ -11,8 +11,9 @@
 
 volatile uint32_t isrLastPulse = 0;
 volatile uint32_t isrMtrTimePeriod = 0;
-volatile uint32_t mtrLastUpdate = 0, previousSlice = 0, lastExecute = 0, now_milli=0 ;
-
+volatile uint32_t mtrLastUpdate = 0, previousSlice = 0, lastSlideExecute = 0, lastLoopExecute =0, now_milli=0 ;
+uint8_t dispIndex = 0;
+bool updated = false;
 uint16_t frame[SLICE_NUM]={0};
 
 const uint8_t alpha[59 * 5] PROGMEM = {
@@ -115,11 +116,16 @@ void load_string(char *s, uint8_t start_pos = 0){
 
 void sliding_string(char *s, uint32_t slide_time_ms){
   static uint8_t slider_pos = 0;
-  if((now_milli - lastExecute) > slide_time_ms){
+  if((now_milli - lastSlideExecute) > slide_time_ms){
     load_string(s, slider_pos);
     slider_pos =  (slider_pos + 1) % SLICE_NUM;
-    lastExecute = now_milli;
+    lastSlideExecute = now_milli;
   }
+}
+
+uint8_t compute_mid(char * s){
+  uint8_t mid = strlen(s) / 2;
+  return SLICE_NUM - (mid*5);
 }
 
 void setup() {
@@ -137,9 +143,8 @@ void setup() {
 }
 
 void loop() {
-  char s[]="H I !";
+  char *s[]={"H E L L O !", "S L I D I N G", "P O V", ":)", ":D"};
   uint32_t localMtrTimePeriod, localLastPulse;
-  
   noInterrupts();
   localMtrTimePeriod = isrMtrTimePeriod;
   localLastPulse = isrLastPulse;
@@ -156,8 +161,31 @@ void loop() {
   // If loop() was running more than the one rotation of motor then we can wrap it.
   loopElapsed %= localMtrTimePeriod;
   uint32_t currentSlice = (loopElapsed * SLICE_NUM) /localMtrTimePeriod;
+  if(now_milli - lastLoopExecute > 5000){
+    dispIndex++;
+    lastLoopExecute = now_milli;
+  }
+  switch(dispIndex){
+    case 0:
+      if(!updated){
+        load_string(s[dispIndex], compute_mid(s[dispIndex]));
+        updated = true;
+      }
+    break;
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+      sliding_string(s[dispIndex], 100);
+    break;
+    case 5:
+      memset(frame, 0, sizeof(frame));
+    break;
+    default:
+      updated = false;
+      dispIndex = 0;
+  }
 
-  sliding_string(s,100);
   if(currentSlice != previousSlice){
     tlc_write_2_bytes(frame[currentSlice % SLICE_NUM]);
     previousSlice = currentSlice;
