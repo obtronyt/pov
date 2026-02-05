@@ -2,14 +2,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 import math
-for i in range(1,7):
-    path = r"D:\\Proj\\pov\\sml"+str(i)+r".jpg"
+import sys
+def convert_image_to_2byte_array(path, show_plot = False):
     img = Image.open(path).convert("L")
     size = min(img.size)
     img = img.crop((0, 0, size, size))
     img_array = np.array(img)
     img_array = img_array / 255.0
-    img_bw = (img_array > 0.5).astype(float)
+    img_bw = (img_array > 0.6).astype(float)
     h,w = img_bw.shape
     cx,cy = w//2, h//2
     R_MAX = cx
@@ -28,11 +28,11 @@ for i in range(1,7):
     ROWS = 12
 
     frame = np.zeros((SLICE_NUM, ROWS))
-
+    # Start from -90 deg because the display start plotting from top or -90/270
     for i in range(SLICE_NUM):
         ang = math.pi * 2 * i / SLICE_NUM - (math.pi / 2)
         for j in range(ROWS):
-            r = R_MIN + ((j/ROWS)*(R_MAX - R_MIN))
+            r = R_MIN + ((j/(ROWS))*(R_MAX - R_MIN))
             x = int(cx + r*math.cos(ang))
             y = int(cy + r*math.sin(ang))
             if(0 <= x < w and 0 <= y < h):
@@ -75,23 +75,31 @@ for i in range(1,7):
     print("};")
     print()
 
-# plt.figure(figsize=(14, 4))
+    if(show_plot):
+        plt.figure(figsize=(14, 4))
 
-# plt.subplot(1, 3, 1)
-# plt.imshow(img_bw, cmap="gray")
-# plt.title("Input Image (B/W)")
-# plt.axis("off")
+        plt.subplot(1, 3, 1)
+        plt.imshow(img_bw, cmap="gray")
+        plt.title("Input Image (B/W)")
+        plt.axis("off")
 
-# plt.subplot(1, 3, 2)
-# plt.imshow(img_donut, cmap="gray")
-# plt.title("After Donut Mask")
-# plt.axis("off")
+        plt.subplot(1, 3, 2)
+        plt.imshow(img_donut, cmap="gray")
+        plt.title("After Donut Mask")
+        plt.axis("off")
 
-# plt.subplot(1, 3, 3)
-# plt.imshow(frame.T, aspect="auto", cmap="gray")
-# plt.title("POV Sampled Data\n(radius vs angle)")
-# plt.xlabel("Angle → time")
-# plt.ylabel("LED index → radius")
+        plt.subplot(1, 3, 3)
+        plt.imshow(frame.T, aspect="auto", cmap="gray")
+        plt.title("POV Sampled Data\n(radius vs angle)")
+        plt.xlabel("Angle → time")
+        plt.ylabel("LED index → radius")
 
-# plt.tight_layout()
-# plt.show()
+        plt.tight_layout()
+        plt.show()
+
+if __name__ == "__main__":
+    if(len(sys.argv) > 1):
+        convert_image_to_2byte_array(str(sys.argv[1]), show_plot=True)
+    else:
+        convert_image_to_2byte_array(r".\\sml1.jpg", show_plot = True)
+        
