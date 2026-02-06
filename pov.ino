@@ -10,16 +10,18 @@
 #include "alpha.h"
 
 #define SLICE_NUM 360UL 
-#define ALPHA_SLICE_NUM 100UL  
+#define ALPHA_SLICE_NUM 120UL 
+#define ANIMATE_SLICE_NUM 60UL 
 
 volatile uint32_t isrLastPulse = 0;
 volatile uint32_t isrMtrTimePeriod = 0;
 volatile uint32_t mtrLastUpdate = 0, previousSlice = 0, lastSlideExecute = 0, lastLoopExecute =0, lastAnimateExecute = 0, now_milli=0;
-uint8_t dispIndex = 10;
+uint8_t dispIndex = 0;
 uint8_t battCheckCount = 0;
 bool updated = false;
 uint16_t frame[SLICE_NUM] = {0};
 uint32_t dynamicSlice = SLICE_NUM;
+bool animationInProgress =false;
 
 
 
@@ -38,6 +40,93 @@ void IRAM_ATTR mIsr() {
   uint32_t now = micros();
   isrMtrTimePeriod = now - isrLastPulse;
   isrLastPulse = now;
+}
+
+
+void load_kicker(uint16_t animate_speed = 200)
+{
+  static uint16_t kickerId = 0, ballFall = 0, ballFalling = 0x3;
+  char hit_index = 2;
+  uint16_t *temp = NULL;
+  if(now_milli - lastAnimateExecute < animate_speed)
+    return;
+  switch(kickerId){
+  // stand
+  case 0:
+      animationInProgress = true;
+      memset(frame, 0, sizeof(frame));
+      memcpy(frame, kicker, sizeof(uint16_t)*10);
+      kickerId++;
+      break;
+  // ball fall
+  case 1:
+      memset(frame, 0, sizeof(frame));
+      memcpy(frame, kicker, sizeof(uint16_t)*10);
+      frame[8] |= ballFalling<<ballFall;
+      frame[9] |= ballFalling<<ballFall;
+      ballFall++;
+      if(ballFall >= 10)
+        kickerId++;
+      break;
+  case 2:
+  case 3:
+      memset(frame, 0, sizeof(frame));
+      memcpy(frame, kicker+(10*(kickerId-1)), sizeof(uint16_t)*10);
+      kickerId++;
+      ballFall = 10;
+      break;
+  case 4:
+      // ball moving
+      if(ballFall == hit_index)
+        kickerId++;
+      else{
+      memset(frame, 0, sizeof(frame));
+      memcpy(frame, walker+((ballFall%4)*10), sizeof(uint16_t)*10);
+      uint16_t ball_bounce = ballFall%4+5; 
+      temp = frame+ballFall;
+      *temp = ballFalling << ball_bounce;
+      ballFall = (ballFall+1)%dynamicSlice;
+      temp = frame+ballFall;
+      *temp = ballFalling << ball_bounce;
+      }
+      break;
+  // GUy falling
+  case 5:
+  case 6:
+  case 7:
+      memset(frame, 0 ,sizeof(frame));
+      memcpy(frame, kicker+(10*(kickerId-2)), sizeof(uint16_t)*10);
+      kickerId++;
+      break;
+  case 8:
+      ballFall = 0;
+      kickerId = 0;
+      memset(frame, 0 ,sizeof(frame));
+      memcpy(frame, kicker+(10*(kickerId-3)), sizeof(uint16_t)*10);
+      animationInProgress = false;
+      dispIndex++;
+      break;
+  }
+  lastAnimateExecute = now_milli;
+}
+
+void load_walker(uint16_t animate_speed = 200){
+  static uint16_t walkerId = 0, xOffset = 0;
+  uint16_t *temp = NULL;
+  if(now_milli - lastAnimateExecute < animate_speed)
+    return;
+  memset(frame, 0 , sizeof(frame));
+  temp = frame + xOffset;
+  for(char i=0 ; i < 10; i++)
+  {
+    *temp = walker[walkerId*10 + i];
+    temp++;
+    if(temp == frame+dynamicSlice)
+      temp = frame;
+  }
+  walkerId = (walkerId + 1)%4;
+  xOffset = (xOffset + 1)%dynamicSlice;
+  lastAnimateExecute = now_milli;
 }
 
 // start_row = 0: D1
@@ -142,7 +231,9 @@ void setup() {
 
 void loop() {
   char *s[]={"H E L L O !", "P O V   B Y", "O B T R O N", ":)", ":D"};
+  char o[] = "O U C H !";
   uint32_t localMtrTimePeriod, localLastPulse;
+  volatile uint16_t animationTime = 3000;
   noInterrupts();
   localMtrTimePeriod = isrMtrTimePeriod;
   localLastPulse = isrLastPulse;
@@ -159,36 +250,57 @@ void loop() {
   // If loop() was running more than the one rotation of motor then we can wrap it.
   loopElapsed %= localMtrTimePeriod;
   uint32_t currentSlice = (loopElapsed * dynamicSlice) /localMtrTimePeriod;
-  if(now_milli - lastLoopExecute > 3000){
-    dispIndex++;
+  if(now_milli - lastLoopExecute > animationTime){
+    if(!animationInProgress){
+      dispIndex++;
+      updated = false;
+    }
     lastLoopExecute = now_milli;
   }
-  switch(dispIndex){
+  switch(dispIndex){ 
     case 0:
+    case 1:
+    case 2:
       dynamicSlice = ALPHA_SLICE_NUM;
       if(!updated){
         load_string(s[dispIndex], compute_mid(s[dispIndex]));
         updated = true;
       }
     break;
-    case 1:
-    case 2:
     case 3:
     case 4:
       dynamicSlice = ALPHA_SLICE_NUM;
       sliding_string(s[dispIndex], 100);
     break;
-    case 10:
+    case 7:
       if(!updated){
         dynamicSlice = ALPHA_SLICE_NUM;
         show_battery_level();
         updated = true;
       }
       break;
+    case 8:
+      dynamicSlice = ANIMATE_SLICE_NUM;
+      load_kicker(220);
+      break;
+    case 9:
+      dynamicSlice = ANIMATE_SLICE_NUM;
+      if(!updated){
+      memset(frame, 0, sizeof(frame));
+      memcpy(frame, kicker+(5*10), sizeof(uint16_t)*10);
+      updated = true;
+      }
+      break;
+    case 10:
+      dynamicSlice = ALPHA_SLICE_NUM;
+      sliding_string(o, 100);
+      break;
     case 11:
-      updated = false;
-      dispIndex = 0;  
-    break;
+      dispIndex = 0;
+      updated = 0;
+      animationInProgress=false;
+      animationTime = 3000;
+      break;    
     default:
       updated = false;
       dynamicSlice = SLICE_NUM;
