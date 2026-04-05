@@ -8,6 +8,7 @@
 #include <string.h>
 #include "smiley.h"
 #include "alpha.h"
+#include "math.h"
 
 #define SLICE_NUM 360UL 
 #define ALPHA_SLICE_NUM 120UL 
@@ -15,15 +16,14 @@
 
 volatile uint32_t isrLastPulse = 0;
 volatile uint32_t isrMtrTimePeriod = 0;
-volatile uint32_t mtrLastUpdate = 0, previousSlice = 0, lastSlideExecute = 0, lastLoopExecute =0, lastAnimateExecute = 0, now_milli=0;
+volatile uint32_t mtrLastUpdate = 0, previousSlice = 0, lastSlideExecute = 0, lastLoopExecute =0, lastAnimateExecute = 0, now_milli=0, nextBlink =0;
 uint8_t dispIndex = 0;
 uint8_t battCheckCount = 0;
 bool updated = false;
 uint16_t frame[SLICE_NUM] = {0};
+uint16_t random_index[SLICE_NUM] = {0};
 uint32_t dynamicSlice = SLICE_NUM;
 bool animationInProgress =false;
-
-
 
 void tlc_write_12_bits(uint16_t inp) {
   for (uint8_t i = 0; i < 12; i++) {
@@ -41,7 +41,6 @@ void IRAM_ATTR mIsr() {
   isrMtrTimePeriod = now - isrLastPulse;
   isrLastPulse = now;
 }
-
 
 void load_kicker(uint16_t animate_speed = 200)
 {
@@ -101,6 +100,7 @@ void load_kicker(uint16_t animate_speed = 200)
   case 8:
       ballFall = 0;
       kickerId = 0;
+      updated = false;
       memset(frame, 0 ,sizeof(frame));
       memcpy(frame, kicker+(10*(kickerId-3)), sizeof(uint16_t)*10);
       animationInProgress = false;
@@ -154,18 +154,21 @@ void load_string(char *s, uint8_t start_pos = 0, uint8_t start_row = 0, bool mer
   }
 }
 
-void sliding_string(char *s, uint32_t slide_time_ms){
+void sliding_string(char *s, uint32_t slide_time_ms, bool merge=false){
   static uint8_t slider_pos = 0;
   if((now_milli - lastSlideExecute) > slide_time_ms){
-    load_string(s, slider_pos);
+    load_string(s, slider_pos, merge);
     slider_pos =  (slider_pos + 1) % dynamicSlice;
     lastSlideExecute = now_milli;
   }
 }
 
-uint8_t compute_mid(char * s){
-  uint8_t mid = strlen(s) / 2;
-  return dynamicSlice - (mid*5);
+uint16_t compute_mid(char * s, bool reverse = false){
+  uint16_t mid = strlen(s) / 2;
+  if(!reverse)
+    return dynamicSlice - (mid*5);
+  else
+    return (dynamicSlice/2) - (mid*5);
 }
 
 void smiley_animate(){
@@ -213,16 +216,230 @@ void show_battery_level(){
   load_string(s, compute_mid(s), 4, true);
 }
 
-void setup() {
-  pinMode(HE_SENS, INPUT);
+// 10*8 rectangel with 3*3 eye ball void
+void generate_eye(uint16_t start_col, uint8_t eye_ball_x, uint8_t eye_ball_y, char blink){
+  uint16_t eye_frame[8]={0};
+  uint8_t e_col=8;
+  uint8_t e_row=10;
+  for(int i=0;i<(e_row);i++){
+    for(int j=0; j< e_col; j++){
+      if(blink){
+        if(i==5 || i ==6)
+          eye_frame[j] |= 1<<(i);
+      }
+      else{
+        if(!(i >= eye_ball_y && (i < eye_ball_y+3) && j >= eye_ball_x && (j < eye_ball_x+3)))
+        {
+          eye_frame[j]|=1<<(i+1);
+        }
+      }
+    }
+  }
 
+  for(int i=0;i<8;i++){
+    uint16_t ind = (start_col+i)%dynamicSlice;
+    frame[ind] = eye_frame[i];
+  }
+
+}
+
+void eye_animation(){
+  static uint16_t curr_frame = 0;
+  static uint32_t startedBlink =0;
+  long r = 0;
+  if(nextBlink == 0){
+  memset(frame, 0 ,sizeof(frame));
+  nextBlink = now_milli + 1000;
+  }
+  switch(curr_frame){
+      case 0:
+        if(!updated){
+        load_string("---------", (dynamicSlice/2) - 5, 0, true);
+
+        // left eye
+        generate_eye(dynamicSlice-10, 3,3,0);
+        // right eye
+        generate_eye(10, 3,3,0);
+        updated = true;
+        }
+        if(now_milli > nextBlink ){
+          curr_frame++;
+          startedBlink = now_milli;
+          updated = false;
+        }
+      break;
+      default:
+                // left eye
+        if(!updated){
+        generate_eye(dynamicSlice-10, 3,3,1);
+        // right eye
+        generate_eye(10, 3,3,1);
+        updated = true;
+        }
+        if(now_milli - startedBlink > 400)
+        {
+          curr_frame = 0;
+          r = random(800,1200);
+          nextBlink = now_milli + r;
+          updated = false;
+        }
+    }
+
+}
+
+void eye_animation_pattern(){
+  static uint8_t state = 0;
+  static uint32_t lastMove = 0;
+  static uint8_t step = 0;
+
+  static int8_t dx = 3;
+  static int8_t dy = 3;
+
+  if(now_milli - lastMove < 150) return;
+  lastMove = now_milli;
+
+  switch(state){
+
+    case 0: // center to right
+      dx = 3 + step;
+      dy = 3;
+      step++;
+      if(step > 2){
+        step = 0;
+        state = 1;
+      }
+    break;
+
+    case 1: // center
+      dx = 3;
+      dy = 3;
+      state = 2;
+    break;
+
+    case 2: // center to diagonal right
+      dx = 3 + step;
+      dy = 3 + step;
+      step++;
+      if(step > 2){
+        step = 0;
+        state = 3;
+      }
+    break;
+
+    case 3: // center
+      dx = 3;
+      dy = 3;
+      state = 4;
+    break;
+
+    case 4: // center to left
+      dx = 3 - step;
+      dy = 3;
+      step++;
+      if(step > 2){
+        step = 0;
+        state = 5;
+      }
+    break;
+
+    case 5: // center
+      dx = 3;
+      dy = 3;
+      state = 6;
+    break;
+
+    case 6: // center to diagonal left
+      dx = 3 - step;
+      dy = 3 - step;
+      step++;
+      if(step > 2){
+        step = 0;
+        state = 0;
+      }
+    break;
+  }
+
+  generate_eye(dynamicSlice-10, dx, dy, 0);
+  generate_eye(10, dx, dy, 0);
+}
+void set_pixel(uint16_t x, uint16_t y, bool on=true){
+  if(on)
+    frame[x%dynamicSlice]|=1<<(y%12);
+  else
+    frame[x%dynamicSlice]&= (1<<(y%12))^(0xFFFF) ;
+}
+
+void randomize_array(){
+  for(int i = 0; i< 360; i++)
+  {
+    random_index[i]=i;
+  }
+  for(int i=0; i < 360; i++){
+    int j = ((int)random(360));
+    uint16_t temp = random_index[j];
+    random_index[j] = random_index[i];
+    random_index[i] = temp;
+  }
+}
+
+void random_sparkle(){
+  static uint16_t current_pixel = 0;
+  static uint32_t animateTime = 0;
+  static uint8_t pixel_life[360][12] = {0};
+  if(updated) return;
+  if(!animationInProgress){
+    current_pixel = 0;
+    randomize_array();
+    animationInProgress = true;
+    memset(frame, 0, sizeof(frame));
+    memset(pixel_life, 0 ,sizeof(pixel_life));
+    animateTime = now_milli;
+  }
+  if(now_milli - lastAnimateExecute < 1) return;
+  lastAnimateExecute = now_milli;
+
+  for(int i = 0; i < 360; i++){
+    for(int j =0 ; j<12; j++){
+      if(pixel_life[i][j] > 0){
+        pixel_life[i][j]-=1;
+        if(pixel_life[i][j] == 0){
+          set_pixel(i, j, false);
+        }
+      }
+    }
+  }
+  for(int m = 0 ;m <5;m++){
+
+    uint16_t rRow = random(12);
+    set_pixel(random_index[current_pixel], rRow);
+    pixel_life[random_index[current_pixel]][rRow] = random(5,15);
+    current_pixel ++;
+    if(current_pixel >= 360)
+    { randomize_array();
+      current_pixel = 0;
+    }
+  }
+
+  if(now_milli - animateTime > 7000){
+    updated = true;
+    animationInProgress = false;
+  }
+
+}
+
+
+
+
+void setup() {
+  randomSeed(millis());
+
+  pinMode(HE_SENS, INPUT);
   pinMode(TLC_CLK, OUTPUT);
   pinMode(TLC_EN, OUTPUT);
   pinMode(TLC_DIN, OUTPUT);
   pinMode(TLC_LATCH, OUTPUT);
 
   digitalWrite(TLC_EN, LOW);
-
   attachInterrupt(digitalPinToInterrupt(HE_SENS), mIsr, FALLING);
   previousSlice = SLICE_NUM;
 }
@@ -230,8 +447,8 @@ void setup() {
 
 
 void loop() {
-  char *s[]={"H E L L O !", "P O V   B Y", "O B T R O N", ":)", ":D"};
-  char o[] = "O U C H !";
+  char *s[]={"H E L L O !", "P O V   B Y", "O B T R O N", "L O A D I N G"};
+  char fin[]  = "- - F I N - -";
   uint32_t localMtrTimePeriod, localLastPulse;
   volatile uint16_t animationTime = 3000;
   noInterrupts();
@@ -268,45 +485,64 @@ void loop() {
       }
     break;
     case 3:
-    case 4:
-      dynamicSlice = ALPHA_SLICE_NUM;
       sliding_string(s[dispIndex], 100);
     break;
+    case 4:
+    case 5:
+      dynamicSlice = ALPHA_SLICE_NUM;
+      eye_animation();
+    break;
+    case 6:
     case 7:
+      dynamicSlice = ALPHA_SLICE_NUM;
+      eye_animation_pattern();
+    break;
+    case 11:
       if(!updated){
         dynamicSlice = ALPHA_SLICE_NUM;
         show_battery_level();
         updated = true;
       }
       break;
-    case 8:
+    case 12:
       dynamicSlice = ANIMATE_SLICE_NUM;
       load_kicker(220);
       break;
-    case 9:
-      dynamicSlice = ANIMATE_SLICE_NUM;
+    case 13:
+    case 14:
+      dynamicSlice = 100;
       if(!updated){
+      char *st = "O U C H";
       memset(frame, 0, sizeof(frame));
       memcpy(frame, kicker+(5*10), sizeof(uint16_t)*10);
+      load_string(st, compute_mid(st, true), 0, true);
       updated = true;
       }
-      break;
-    case 10:
+    break;
+    case 15:
+      dynamicSlice = SLICE_NUM;
+      random_sparkle();
+    break;
+    case 16:
       dynamicSlice = ALPHA_SLICE_NUM;
-      sliding_string(o, 100);
-      break;
-    case 11:
+      if(!updated){
+        load_string(fin, compute_mid(fin));
+        updated = true;
+      }
+    break;
+    case 17:
       dispIndex = 0;
       updated = 0;
       animationInProgress=false;
       animationTime = 3000;
+      nextBlink = 0;
       break;    
     default:
       updated = false;
       dynamicSlice = SLICE_NUM;
       smiley_animate();
   }
-
+  
   if(currentSlice != previousSlice){
     tlc_write_12_bits(frame[currentSlice % dynamicSlice]);
     previousSlice = currentSlice;
