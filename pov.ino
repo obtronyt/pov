@@ -22,6 +22,7 @@ uint8_t battCheckCount = 0;
 bool updated = false;
 uint16_t frame[SLICE_NUM] = {0};
 uint16_t random_index[SLICE_NUM] = {0};
+uint16_t sine_wave[SLICE_NUM] = {0};
 uint32_t dynamicSlice = SLICE_NUM;
 bool animationInProgress =false;
 
@@ -40,6 +41,17 @@ void IRAM_ATTR mIsr() {
   uint32_t now = micros();
   isrMtrTimePeriod = now - isrLastPulse;
   isrLastPulse = now;
+}
+
+void populate_sine_wave(){
+    static float phase = 0.2;
+    for(int i = 0; i < SLICE_NUM; i++){
+      float val = sin((2 * PI * i * 6) / SLICE_NUM + phase);
+      phase+=0.2; 
+      val = (val + 1.0f) * 0.5f;                 
+      uint16_t index = (uint16_t)(val * 11 + 0.5f); // 0–11
+      sine_wave[i] = 1 << index;
+  }
 }
 
 void load_kicker(uint16_t animate_speed = 200)
@@ -426,12 +438,37 @@ void random_sparkle(){
   }
 
 }
+void animate_sine_wave(){
+  static uint16_t index = 0;
+  static uint16_t trail[6] = {0};
 
+  if(now_milli - lastAnimateExecute < 50) return;
+  lastAnimateExecute = now_milli;
 
+  if(index == 0){
+    memset(frame, 0, sizeof(frame));
+    for(int i = 0; i < 6; i++) trail[i] = 0;
+  }
+
+  for(int i = 5; i > 0; i--){
+    trail[i] = trail[i-1];
+  }
+  trail[0] = index;
+  memset(frame, 0, sizeof(frame));
+  for(int i = 0; i < 6; i++){
+    uint16_t pos = trail[i];
+    frame[pos] = sine_wave[pos];
+  }
+  index++;
+  if(index >= SLICE_NUM){
+    index = 0;
+  }
+}
 
 
 void setup() {
   randomSeed(millis());
+  populate_sine_wave();
 
   pinMode(HE_SENS, INPUT);
   pinMode(TLC_CLK, OUTPUT);
@@ -447,7 +484,7 @@ void setup() {
 
 
 void loop() {
-  char *s[]={"H E L L O !", "P O V   B Y", "O B T R O N", "L O A D I N G"};
+  char *s[]={"P O V   D I S P", "L O A D I N G"};
   char fin[]  = "- - F I N - -";
   uint32_t localMtrTimePeriod, localLastPulse;
   volatile uint16_t animationTime = 3000;
@@ -476,16 +513,18 @@ void loop() {
   }
   switch(dispIndex){ 
     case 0:
-    case 1:
-    case 2:
       dynamicSlice = ALPHA_SLICE_NUM;
       if(!updated){
         load_string(s[dispIndex], compute_mid(s[dispIndex]));
         updated = true;
       }
     break;
-    case 3:
+    case 1:
       sliding_string(s[dispIndex], 100);
+    break;
+    case 2:
+    case 3:
+      animate_sine_wave();
     break;
     case 4:
     case 5:
