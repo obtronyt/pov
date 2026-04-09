@@ -438,9 +438,15 @@ void random_sparkle(){
   }
 
 }
-void animate_sine_wave(){
+void animate_sine_wave(bool reset = false){
   static uint16_t index = 0;
   static uint16_t trail[6] = {0};
+
+  if(reset){
+    index = 0;
+    memset(trail, 0, sizeof(trail));
+    return;
+  }
 
   if(now_milli - lastAnimateExecute < 50) return;
   lastAnimateExecute = now_milli;
@@ -575,6 +581,7 @@ void loop() {
       animationInProgress=false;
       animationTime = 3000;
       nextBlink = 0;
+      animate_sine_wave(true);
       break;    
     default:
       updated = false;
