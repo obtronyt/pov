@@ -1,0 +1,22 @@
+# Arduino / arduino-cli build output
+build/
+*.elf
+*.bin
+*.hex
+*.map
+
+# KiCad local state and backups
+*.kicad_prl
+*-backups/
+*.kicad_pcb-bak
+*.kicad_sch-bak
+_autosave-*
+fp-info-cache
+*.bak
+
+# editor local history
+.history/
+
+# python
+__pycache__/
+*.pyc

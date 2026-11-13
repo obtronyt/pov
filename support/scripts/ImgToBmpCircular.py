@@ -2,7 +2,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 import math
+import os
 import sys
+
+IMG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "images")
+
 def convert_image_to_2byte_array(path, show_plot = False):
     img = Image.open(path).convert("L")
     size = min(img.size)
@@ -101,5 +105,5 @@ if __name__ == "__main__":
     if(len(sys.argv) > 1):
         convert_image_to_2byte_array(str(sys.argv[1]), show_plot=True)
     else:
-        convert_image_to_2byte_array(r".\\sml1.jpg", show_plot = True)
+        convert_image_to_2byte_array(os.path.join(IMG_DIR, "sml1.jpg"), show_plot = True)
         
