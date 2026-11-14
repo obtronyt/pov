@@ -2,7 +2,10 @@
 // A hall sensor pulses once per motor revolution; the loop estimates the
 // current angular slice from that period and shifts one 12 bit column out to
 // the LED driver. Animations only write into frame[], they never touch the
-// driver themselves.
+// driver themselves; the one exception is Off, which disables the driver
+// outputs so the LEDs go dark while the motor keeps spinning.
+//
+// Author: Obtron
 
 #define TLC_CLK 14
 #define TLC_DIN 13
@@ -21,13 +24,15 @@
 #include "smiley.h"
 
 // edit hotspot name and password before flashing
-const char WIFI_SSID[] = "my-hotspot";
-const char WIFI_PASS[] = "my-password";
+const char WIFI_SSID[] = "ssid";
+const char WIFI_PASS[] = "password123";
 const char MDNS_NAME[] = "pov";
 
 #define SLICE_NUM 360UL
 #define ALPHA_SLICE_NUM 120UL
 #define ANIMATE_SLICE_NUM 60UL
+#define SINE_SLICE_NUM 100UL
+#define SINE_CYCLES 5
 #define TEXT_MAX 32
 #define KICK_DONE 9
 
@@ -35,11 +40,17 @@ const char MDNS_NAME[] = "pov";
 #define ANIM_TEXT 0x02  // draws animText, web form offers the text box
 #define ANIM_PICK 0x04  // offered in the web dropdown
 
-// kick foot ball phase timings, tuned so the whole sequence runs ~11 s
-#define FB_WALK_MS 2500
+// intro banner: one lap is ALPHA_SLICE_NUM * MARQUEE_STEP_MS, so keep the
+// dwell in the anims table at or above that or the text never comes round
+const char MARQUEE_TEXT[] = "U B U C O N 2 0 2 6";
+#define MARQUEE_STEP_MS 65
+
+// kick foot ball phase timings, tuned so the whole sequence runs ~18 s
+#define FB_WALK_SPAN 16     // slices paced in each direction
+#define FB_WALK_STEP_MS 130
 #define FB_OUCH_MS 2500
-#define FB_BALL_MS 100
-#define FB_BALL_STEP 2
+#define FB_BALL_MS 145
+#define FB_BALL_STEP 1
 
 // sweep group: four pure-maths patterns, SG_PHASE_MS each
 #define SG_PHASES 4
@@ -49,6 +60,13 @@ const char MDNS_NAME[] = "pov";
 #define SG_RIPPLE_MS 90
 #define SG_MOIRE_MS 45
 #define SG_RADAR_TAIL 24
+
+// phyllotaxis: one dot every PHY_DOT_MS, then hold the finished sunflower
+#define PHY_DOTS 600
+#define PHY_DOT_MS 12
+#define PHY_HOLD_MS 1800
+#define PHY_GOLDEN 140808UL  // 137.50776 slices, in 1/1024 slice units
+#define PHY_WRAP (SLICE_NUM * 1024UL)
 
 struct Anim {
   const char *name;
@@ -80,7 +98,7 @@ uint32_t lastSlideExecute = 0;
 uint32_t lastAnimateExecute = 0;
 
 uint16_t random_index[SLICE_NUM] = {0};
-uint16_t sine_wave[SLICE_NUM] = {0};
+uint16_t sine_wave[SINE_SLICE_NUM] = {0};
 uint8_t pixelLife[SLICE_NUM][12] = {0};
 
 uint16_t sliderPos = 0;
@@ -103,6 +121,8 @@ uint16_t ballFall = 0;
 uint16_t ballTravel = 0;
 uint16_t walkerId = 0;
 uint16_t walkerX = 0;
+int8_t walkerDir = 1;
+bool walkerPaced = false;
 uint8_t fbPhase = 0;
 uint32_t fbPhaseStarted = 0;
 uint8_t sgPhase = 0;
@@ -110,6 +130,9 @@ uint32_t sgPhaseStarted = 0;
 uint16_t sgStep = 0;
 uint16_t sparkPixel = 0;
 uint32_t sparkStarted = 0;
+uint16_t phyDot = 0;
+uint32_t phyAngle = 0;
+uint32_t phyFull = 0;
 
 ESP8266WebServer server(80);
 bool wifiReady = false;
@@ -137,11 +160,11 @@ void IRAM_ATTR mIsr() {
 
 // ---------------------------------------------------------------- drawing
 
+// SINE_CYCLES whole cycles spread over the slices the animation actually
+// shows, so the wave is evenly spaced and the last slice joins the first
 void populate_sine_wave() {
-  float phase = 0.2f;
-  for (uint16_t i = 0; i < SLICE_NUM; i++) {
-    float val = sin((2 * PI * i * 6) / SLICE_NUM + phase);
-    phase += 0.2f;
+  for (uint16_t i = 0; i < SINE_SLICE_NUM; i++) {
+    float val = sin((2 * PI * i * SINE_CYCLES) / SINE_SLICE_NUM);
     val = (val + 1.0f) * 0.5f;
     sine_wave[i] = 1 << (uint16_t)(val * 11 + 0.5f);
   }
@@ -225,18 +248,20 @@ void tick_none() {
 }
 
 void begin_title() {
-  const char *s = "UBUCON 2026";
+  const char *s = "W E L C O M E";
   load_string(s, compute_mid(s, false), 0, false);
 }
 
-void begin_loading() {
+// 19 characters is 95 of the 120 slices, so the banner nearly fills the circle
+// and the lap reads as one turning ring of text rather than text sliding past
+void begin_marquee() {
   sliderPos = 0;
   lastSlideExecute = now_milli;
-  load_string("L O A D I N G", 0, 0, false);
+  load_string(MARQUEE_TEXT, 0, 0, false);
 }
 
-void tick_loading() {
-  sliding_string("L O A D I N G", 100);
+void tick_marquee() {
+  sliding_string(MARQUEE_TEXT, MARQUEE_STEP_MS);
 }
 
 // text animations size the circle to the message so long strings do not
@@ -281,7 +306,7 @@ void tick_sine() {
   memset(frame, 0, sizeof(frame));
   for (uint8_t i = 0; i < 6; i++)
     frame[sineTrail[i]] = sine_wave[sineTrail[i]];
-  sineIndex = (sineIndex + 1) % SLICE_NUM;
+  sineIndex = (sineIndex + 1) % SINE_SLICE_NUM;
   if (sineIndex == 0)
     memset(sineTrail, 0, sizeof(sineTrail));
 }
@@ -423,23 +448,39 @@ void begin_battery() {
 void fb_walk_begin() {
   walkerId = 0;
   walkerX = 0;
+  walkerDir = 1;
+  walkerPaced = false;
   lastAnimateExecute = 0;
 }
 
+// Paces FB_WALK_SPAN slices out, turns, and comes back to where it started, so
+// the kicker appears at the spot the walker set off from. The step that turns
+// does not move, which gives the figure one frame to face the other way. The
+// columns are drawn back to front when walking the other way, mirroring the
+// sprite so the stride leads into the direction of travel.
 void fb_walk_tick() {
-  if (now_milli - lastAnimateExecute < 200)
+  if (now_milli - lastAnimateExecute < FB_WALK_STEP_MS)
     return;
+  lastAnimateExecute = now_milli;
   memset(frame, 0, sizeof(frame));
   uint16_t *temp = frame + walkerX;
   for (uint8_t i = 0; i < 10; i++) {
-    *temp = walker[walkerId * 10 + i];
+    *temp = walker[walkerId * 10 + (walkerDir > 0 ? i : 9 - i)];
     temp++;
     if (temp == frame + dynamicSlice)
       temp = frame;
   }
   walkerId = (walkerId + 1) % 4;
-  walkerX = (walkerX + 1) % dynamicSlice;
-  lastAnimateExecute = now_milli;
+  if (walkerDir > 0) {
+    if (walkerX >= FB_WALK_SPAN)
+      walkerDir = -1;
+    else
+      walkerX++;
+  } else if (walkerX == 0) {
+    walkerPaced = true;
+  } else {
+    walkerX--;
+  }
 }
 
 void fb_kick_begin() {
@@ -541,9 +582,9 @@ void begin_football() {
 
 void tick_football() {
   switch (fbPhase) {
-    case 0:  // walk in
+    case 0:  // pace out and back
       fb_walk_tick();
-      if (now_milli - fbPhaseStarted >= FB_WALK_MS) {
+      if (walkerPaced) {
         fb_enter_phase(1, ANIMATE_SLICE_NUM);
         fb_kick_begin();
       }
@@ -595,6 +636,38 @@ void tick_sparkle() {
     animDone = true;
     sparkStarted = now_milli;
   }
+}
+
+// ---- phyllotaxis, the golden angle sunflower ----
+//
+// Dot n sits at n * 137.50776 degrees, and at SLICE_NUM 360 a slice is one
+// degree, so the angle is just an accumulator held in 1/1024 slice units. The
+// radius grows as sqrt(n) to keep the dots evenly dense; that is the one float
+// here and it costs nothing because a tick places a single dot. Nothing clears
+// frame[], so the spiral arms build up out of what looks like scattered dots.
+void begin_phyllotaxis() {
+  phyDot = 0;
+  phyAngle = 0;
+  phyFull = 0;
+  memset(frame, 0, sizeof(frame));
+}
+
+void tick_phyllotaxis() {
+  if (phyDot >= PHY_DOTS) {
+    if (now_milli - phyFull >= PHY_HOLD_MS)
+      animDone = true;
+    return;
+  }
+  if (now_milli - lastAnimateExecute < PHY_DOT_MS)
+    return;
+  lastAnimateExecute = now_milli;
+  float spread = sqrtf((phyDot + 0.5f) / PHY_DOTS);
+  // D1 is the outermost LED, so row 11 is the centre and the disc grows outward
+  uint16_t row = (uint16_t)(11.0f * (1.0f - spread) + 0.5f);
+  set_pixel((uint16_t)(phyAngle / 1024), row, true);
+  phyAngle = (phyAngle + PHY_GOLDEN) % PHY_WRAP;
+  if (++phyDot >= PHY_DOTS)
+    phyFull = now_milli;
 }
 
 // ---- sweep group, four pure-maths patterns driven by tick_sweep_group ----
@@ -694,23 +767,35 @@ void begin_fin() {
   load_string(s, compute_mid(s, false), 0, false);
 }
 
+// Blank frame[] and pull the driver's enable high, so the LEDs stay dark even
+// though the loop keeps clocking columns out in step with the motor.
+// select_anim re-enables the outputs, so picking anything else comes back on.
+void begin_off() {
+  memset(frame, 0, sizeof(frame));
+  digitalWrite(TLC_EN, HIGH);
+}
+
 // ---------------------------------------------------------------- dispatch
 
 // ANIM_AUTO entries without ANIM_PICK are auto-cycle only: they are the
 // intro/outro cards and never appear in the dropdown.
 const Anim anims[] = {
   {"Title",          begin_title,       tick_none,        ALPHA_SLICE_NUM,   3000, ANIM_AUTO},
-  {"Loading",        begin_loading,     tick_loading,     ALPHA_SLICE_NUM,   3000, ANIM_AUTO},
-  {"Sine",           begin_sine,        tick_sine,        SLICE_NUM,         6000, ANIM_AUTO | ANIM_PICK},
+  {"Marquee",        begin_marquee,     tick_marquee,     ALPHA_SLICE_NUM,   8000, ANIM_AUTO},
+  {"Sweep group",    begin_sweep_group, tick_sweep_group, SLICE_NUM,        32000, ANIM_AUTO | ANIM_PICK},
+  {"Phyllotaxis",    begin_phyllotaxis, tick_phyllotaxis, SLICE_NUM,        11000, ANIM_AUTO | ANIM_PICK},
+  {"Sine",           begin_sine,        tick_sine,        SINE_SLICE_NUM,    6000, ANIM_AUTO | ANIM_PICK},
   {"Eyes",           begin_eyes,        tick_eyes,        ALPHA_SLICE_NUM,   9000, ANIM_AUTO | ANIM_PICK},
   {"Smiley",         begin_smiley,      tick_smiley,      SLICE_NUM,         9000, ANIM_AUTO | ANIM_PICK},
   {"Battery",        begin_battery,     tick_none,        ALPHA_SLICE_NUM,   3000, ANIM_AUTO | ANIM_PICK},
   {"Kick Foot Ball", begin_football,    tick_football,    100,               3000, ANIM_AUTO | ANIM_PICK},
   {"Sparkle",        begin_sparkle,     tick_sparkle,     SLICE_NUM,         7000, ANIM_AUTO | ANIM_PICK},
-  {"Sweep group",    begin_sweep_group, tick_sweep_group, SLICE_NUM,        32000, ANIM_AUTO | ANIM_PICK},
   {"Fin",            begin_fin,         tick_none,        ALPHA_SLICE_NUM,   3000, ANIM_AUTO},
   {"Text",           begin_text,        tick_none,        ALPHA_SLICE_NUM,   6000, ANIM_TEXT | ANIM_PICK},
-  {"Scroll text",    begin_scroll_text, tick_scroll_text, ALPHA_SLICE_NUM,   8000, ANIM_TEXT | ANIM_PICK}
+  {"Scroll text",    begin_scroll_text, tick_scroll_text, ALPHA_SLICE_NUM,   8000, ANIM_TEXT | ANIM_PICK},
+  // no ANIM_AUTO, so the auto cycle never lands on it; picked by hand nothing
+  // ends it, and the 0 dwell lets Auto resume the instant it is selected
+  {"Off",            begin_off,         tick_none,        ALPHA_SLICE_NUM,      0, ANIM_PICK}
 };
 
 const uint8_t ANIM_COUNT = sizeof(anims) / sizeof(anims[0]);
@@ -728,6 +813,7 @@ void select_anim(uint8_t id) {
   lastAnimateExecute = 0;
   lastSlideExecute = 0;
   memset(frame, 0, sizeof(frame));
+  digitalWrite(TLC_EN, LOW);  // undo an earlier Off
   anims[id].begin();
 }
 
@@ -780,8 +866,9 @@ void page_add_escaped(const char *s) {
 void handle_root() {
   page_reset();
   page_add("<!DOCTYPE html><html><head><meta name=viewport "
-           "content=\"width=device-width,initial-scale=1\"><title>POV</title></head>"
-           "<body><h3>POV</h3><form action=/set><select id=a name=id>"
+           "content=\"width=device-width,initial-scale=1\">"
+           "<title>POV Display Web server</title></head>"
+           "<body><h3>POV Display Web server</h3><form action=/set><select id=a name=id>"
            "<option value=auto%s>Auto</option>",
            autoMode ? " selected" : "");
   for (uint8_t i = 0; i < ANIM_COUNT; i++) {
@@ -800,7 +887,8 @@ void handle_root() {
       page_add("%u,", i);
   page_add("],a=document.getElementById('a'),b=document.getElementById('b');"
            "function t(){b.style.display=T.indexOf(+a.value)<0?'none':'inline'}"
-           "a.onchange=t;t()</script></body></html>");
+           "a.onchange=t;t()</script><p><small>by Obtron</small></p>"
+           "</body></html>");
   server.sendHeader("Cache-Control", "no-store");
   server.send(200, "text/html", pageBuf);
 }
