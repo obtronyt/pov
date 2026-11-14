@@ -1,6 +1,9 @@
+import os
 import numpy as np
 from PIL import Image
 import matplotlib.pyplot as plt
+
+IMG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "images")
 
 def cimg(path):
     IMAGE_PATH = path   # Image is 100px high x 60px wide
@@ -22,8 +25,8 @@ def cimg(path):
         print(f"0x{value:04X}, ", end='')
 
 for i in range(1,6):
-    cimg('k'+str(i)+'.jpg')
-cimg("fall.jpg")
+    cimg(os.path.join(IMG_DIR, 'k'+str(i)+'.jpg'))
+cimg(os.path.join(IMG_DIR, "fall.jpg"))
 
 # # binary_10x60 = (arr > TH).astype(np.uint8) * 255
 
