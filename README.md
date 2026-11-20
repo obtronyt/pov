@@ -6,6 +6,9 @@ uses that period to work out the current angular position and clock the right
 12-bit column out to the LED driver. Animations are selected from a small web
 page served by the ESP itself.
 
+<img width="400" height="492" alt="SunFlower" src="https://github.com/user-attachments/assets/b7d47eed-a24a-4656-9ab8-0268e6367a50" />
+
+
 ## Layout
 
 | Path                    | Contents                                                        |
