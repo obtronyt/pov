@@ -79,6 +79,10 @@ const char WIFI_SSID[] = "my-hotspot";
 const char WIFI_PASS[] = "my-password";
 ```
 If connecting via pc, you can use the mDNS pov.local or use the ESP Serial monitor to get the IP address. Alternatively, you can use nmap to get the ESP ip.
+```
+http://pov.local
+```
+<img width="1064" height="270" alt="WS" src="https://github.com/user-attachments/assets/1b36819d-cafe-4eed-af83-a7efd34d50ef" />
 
 ## Adding an animation
 
@@ -158,3 +162,7 @@ these, one per frame.
 
 Both converters print to stdout and need `numpy`, `pillow` and `matplotlib`.
 Keep source artwork in `support/images/`, which is where they look by default.
+
+### 4. Youtube Shorts
+
+https://youtube.com/shorts/mBMTX7Lzo30?si=xlOcu3QmO_tnsg1q
